@@ -1,5 +1,5 @@
 # from flask import Flask, jsonify, request, render_template
-from flask import Flask
+from flask import Flask, jsonify
 import joblib
 import pandas as pd
 import numpy as np
@@ -7,6 +7,7 @@ import json
 import matplotlib.pyplot as plt
 import streamlit as st
 import os
+import time
 
 app = Flask(__name__)
 print(pd.__version__)
@@ -16,11 +17,19 @@ basepath = os.path.join(current_folder, "Models")
 # load models, threshold, data and explainer
 model_load = joblib.load(os.path.join(basepath, "model.pkl"))
 best_thresh = joblib.load(os.path.join(basepath, "best_thresh_LightGBM_NS.pkl"))
-X_test = pd.read_csv(os.path.join(basepath, "X_test_sample.csv"))
-y_test = pd.read_csv(os.path.join(basepath, "y_test_sample.csv"))
-shap_values = pd.read_csv(os.path.join(basepath, "shap_values_sample.csv"))
-shap_values1 = pd.read_csv(os.path.join(basepath, "shap_values1_sample.csv"))
+X_test = pd.read_csv(os.path.join(basepath, "X_test_sample.csv"), index_col=0)
+y_test = pd.read_csv(os.path.join(basepath, "y_test_sample.csv"), index_col=0)
+shap_values = pd.read_csv(os.path.join(basepath, "shap_values_sample.csv"), index_col=0)
+shap_values1 = pd.read_csv(os.path.join(basepath, "shap_values1_sample.csv"), index_col=0)
+# Liste des clients à supprimer
+clients_a_supprimer = [136718, 307488, 378985]
+
 data = pd.DataFrame(y_test, index=y_test.index).reset_index()
+# Supprimer les clients
+data = data[~data['SK_ID_CURR'].isin(clients_a_supprimer)]
+
+# Optionnel : sauvegarder les données filtrées
+data.to_csv(os.path.join(basepath, "X_test_filtered.csv"), index=False)
 
 columns = joblib.load('Models/columns.pkl')                                
 # Compute feature importance
@@ -40,41 +49,81 @@ feat_top = feature_importance.loc[feature_importance['col_name'].isin(top_20)].f
 def hello_world():
     return "<p>Hello, World!</p>"
 
-
 @app.route("/predict/<int:Client_Id>", methods=['GET'])
 def predict(Client_Id: int):
-    # Customer index in the corresponding array
-    data_idx = data.loc[data["SK_ID_CURR"]==int(Client_Id)].index[0]# ERREUR keyError:'SK_ID_CURR'
-    # Customer data based on customer index in final X_test array
-    ID_to_predict = pd.DataFrame(X_test.iloc[data_idx,:]).T  
-    # on réalise la prédiction de ID_to_predict avec le modèle 
-    prediction = sum((model_load.predict_proba(ID_to_predict)[:, 1]>best_thresh)*1)
-    if prediction == 0:
-        decision = "granted"
-    else :
-        decision = "not granted"
-    prob_predict = float(model_load.predict_proba(ID_to_predict)[:, 1])
-    # on renvoie la prédiction 
-    return json.dumps({"decision" : decision, "prediction" : int(prediction), 
-                       "prob_predict": prob_predict, "ID_to_predict" : ID_to_predict.to_json(orient='columns')})
+    start_time = time.time()
+    try:
+        if 'SK_ID_CURR' not in data.columns:
+            return jsonify({"error": "La colonne 'SK_ID_CURR' n'existe pas dans les données."}), 500
+        
+        print(f"Recherche de Client_Id: {Client_Id}")
+        
+        filtered_data = data.loc[data["SK_ID_CURR"] == int(Client_Id)]
+        
+        if filtered_data.empty:
+            return jsonify({"error": f"Client_Id {Client_Id} non trouvé."}), 404
+        
+        data_idx = filtered_data.index[0]
+        ID_to_predict = pd.DataFrame(X_test.iloc[data_idx, :]).T 
+        
+        prediction = sum((model_load.predict_proba(ID_to_predict)[:, 1] > best_thresh) * 1)
+        
+        decision = "granted" if prediction == 0 else "not granted"
+        prob_predict = float(model_load.predict_proba(ID_to_predict)[:, 1])
+        
+        response = {
+            "decision": decision,
+            "prediction": int(prediction),
+            "prob_predict": prob_predict,
+            "ID_to_predict": ID_to_predict.to_json(orient='columns')
+        }
+        
+        print(response)
+        print("Temps pris: {:.2f} secondes".format(time.time() - start_time))
+        return jsonify(response)
+        
+    except Exception as e:
+        print(f"Erreur: {str(e)}")
+        return jsonify({"error": str(e)}), 500
 
 # provide data for shap features importance on selected customer's credit decision 
 @app.route("/cust_vs_group/<int:Client_Id>", methods=['GET'])
 def cust_vs_group(Client_Id: int):
-    # utiliser idx pour former le graph via Flask et l'importer dans streamlit
-    data_idx = data.loc[data["SK_ID_CURR"]==int(Client_Id)].index[0] #string ou pas
-    # customer data based on customer index in final X_test array
-    ID_to_predict = pd.DataFrame(X_test.iloc[data_idx,:]).T
-    # on réalise la prédiction de ID_to_predict avec le modèle 
-    prediction = sum((model_load.predict_proba(ID_to_predict)[:, 1]>best_thresh)*1)
-    if prediction == 0:
-        decision = "granted"
-    else :
-        decision = "not granted"
-    # return json string
-    return json.dumps({'decision' : decision, 'base_value': shap_values.base_values[data_idx], 
-                       'shap_values1_idx': shap_values1[data_idx, :].tolist(), \
-    "ID_to_predict": ID_to_predict.to_json(orient='columns')})
+    start_time = time.time()
+    try:
+        # Vérifiez si 'SK_ID_CURR' existe
+        if 'SK_ID_CURR' not in data.columns:
+            return jsonify({"error": "La colonne 'SK_ID_CURR' n'existe pas dans les données."}), 500
+        
+        print(f"Recherche de Client_Id: {Client_Id}")
+        
+        # Filtrer les données pour trouver le Client_Id
+        filtered_data = data.loc[data["SK_ID_CURR"] == int(Client_Id)]
+        
+        # Vérifiez si des données existent pour le Client_Id
+        if filtered_data.empty:
+            return jsonify({"error": f"Client_Id {Client_Id} non trouvé."}), 404
+        
+        data_idx = filtered_data.index[0]
+        ID_to_predict = pd.DataFrame(X_test.iloc[data_idx, :]).T
+        
+        # Réaliser la prédiction
+        prediction = sum((model_load.predict_proba(ID_to_predict)[:, 1] > best_thresh) * 1)
+        decision = "granted" if prediction == 0 else "not granted"
+        
+        print(f"Temps pris: {time.time() - start_time:.2f} secondes")
+        
+        # Retourner la réponse en JSON
+        return jsonify({
+            'decision': decision,
+            'base_value': shap_values.base_values[data_idx],
+            'shap_values1_idx': shap_values1[data_idx, :].tolist(),
+            "ID_to_predict": ID_to_predict.to_json(orient='columns')
+        })
+        
+    except Exception as e:
+        print(f"Erreur: {str(e)}")
+        return jsonify({"error": str(e)}), 500
 
 
 @app.route("/load_top_10/", methods=['GET'])
@@ -96,6 +145,10 @@ def load_X_test():
 @app.route("/load_data/", methods=['GET'])
 def load_data():
     return {"data" : pd.DataFrame(data).to_json(orient='columns')} 
+
+@app.route("/list_clients", methods=['GET'])
+def list_clients():
+    return jsonify(data['SK_ID_CURR'].unique().tolist())
 
 if __name__ == "__main__":
     print("Starting server on port 8500")
