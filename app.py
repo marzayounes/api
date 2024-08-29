@@ -21,6 +21,7 @@ X_test = pd.read_csv(os.path.join(basepath, "X_test_sample.csv"), index_col=0)
 y_test = pd.read_csv(os.path.join(basepath, "y_test_sample.csv"), index_col=0)
 shap_values = pd.read_csv(os.path.join(basepath, "shap_values_sample.csv"), index_col=0)
 shap_values1 = pd.read_csv(os.path.join(basepath, "shap_values1_sample.csv"), index_col=0)
+print(shap_values.head())
 # Liste des clients à supprimer
 clients_a_supprimer = [136718, 307488, 378985]
 
@@ -104,8 +105,17 @@ def cust_vs_group(Client_Id: int):
         if filtered_data.empty:
             return jsonify({"error": f"Client_Id {Client_Id} non trouvé."}), 404
         
+        # Utiliser l'index de X_test pour accéder à shap_values
         data_idx = filtered_data.index[0]
-        ID_to_predict = pd.DataFrame(X_test.iloc[data_idx, :]).T
+        x_test_idx = data_idx  # Assurez-vous que cet index correspond à X_test
+
+        print(f"Index du client trouvé : {data_idx}")
+
+        # Vérifiez que l'index est valide pour shap_values
+        if x_test_idx >= shap_values.shape[0]:
+            raise IndexError("Index hors des limites pour shap_values.")
+        
+        ID_to_predict = pd.DataFrame(X_test.iloc[x_test_idx, :]).T
         
         # Réaliser la prédiction
         prediction = sum((model_load.predict_proba(ID_to_predict)[:, 1] > best_thresh) * 1)
@@ -116,15 +126,14 @@ def cust_vs_group(Client_Id: int):
         # Retourner la réponse en JSON
         return jsonify({
             'decision': decision,
-            'base_value': shap_values.base_values[data_idx],
-            'shap_values1_idx': shap_values1[data_idx, :].tolist(),
+            'base_value': shap_values[x_test_idx].tolist(),
+            'shap_values1_idx': shap_values1[x_test_idx, :].tolist(),
             "ID_to_predict": ID_to_predict.to_json(orient='columns')
         })
         
     except Exception as e:
         print(f"Erreur: {str(e)}")
         return jsonify({"error": str(e)}), 500
-
 
 @app.route("/load_top_10/", methods=['GET'])
 def load_top_10():
