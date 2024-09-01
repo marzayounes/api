@@ -1,0 +1,1 @@
+web: python votre_script.py
