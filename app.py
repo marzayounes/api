@@ -47,7 +47,6 @@ def hello_world():
     return "<p>Hello, World!</p>"
 
 @app.route("/predict/<int:Client_Id>", methods=['GET'])
-
 def predict(Client_Id: int):
     start_time = time.time()
     try:
